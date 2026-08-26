@@ -1,0 +1,184 @@
+rules_version = '2';
+
+// =============================================================
+// Firestore Security Rules — Trung tâm Giáo dục
+// =============================================================
+//
+// Vai trò:
+//   ADMIN   : toàn quyền
+//   TEACHER : quản lý dữ liệu nghiệp vụ
+//   TA      : trợ giảng
+//
+// Trang phụ huynh sử dụng /parent/:studentId không cần đăng nhập,
+// vì vậy một số dữ liệu cần đọc công khai.
+// =============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // HELPER FUNCTIONS
+    // =========================================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userExists() {
+      return isSignedIn()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        );
+    }
+
+    function userData() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isApproved() {
+      return userExists()
+        && userData().isApproved == true;
+    }
+
+    function isAdmin() {
+      return isApproved()
+        && userData().role == 'ADMIN';
+    }
+
+    // =========================================================
+    // USERS
+    // =========================================================
+
+    match /users/{userId} {
+
+      // Người đăng nhập được đọc hồ sơ người dùng.
+      allow read: if isSignedIn();
+
+      // Người dùng chỉ được tự tạo hồ sơ của chính mình.
+      //
+      // QUAN TRỌNG:
+      // Không cho frontend tự tạo ADMIN hoặc tự duyệt chính mình.
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.isApproved == false
+        && request.resource.data.role in ['TEACHER', 'TA'];
+
+      // Chỉ ADMIN được duyệt, đổi role hoặc xóa user.
+      allow update, delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // LỚP HỌC
+    // =========================================================
+
+    match /classes/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // HỌC SINH
+    // =========================================================
+
+    match /students/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // GHI DANH / HỌC SINH TRONG LỚP
+    // =========================================================
+
+    match /enrollments/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // ĐIỂM DANH
+    // =========================================================
+
+    match /attendance/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // ĐIỂM SỐ
+    // =========================================================
+
+    match /scores/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // HỌC PHÍ — CẤU HÌNH QR / TÀI KHOẢN NGÂN HÀNG
+    // =========================================================
+    //
+    // Dùng để lưu:
+    // - tài khoản chung / riêng từng lớp
+    // - bankId
+    // - accountNo
+    // - accountName
+    // - mẫu nội dung chuyển khoản
+    //
+    // Cho phép parent page đọc để tạo QR thanh toán.
+    // =========================================================
+
+    match /classPaymentConfigs/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // HỌC PHÍ — TRẠNG THÁI ĐÓNG TIỀN
+    // =========================================================
+    //
+    // Dùng để lưu:
+    // - tháng học phí
+    // - số tiền
+    // - đã thu / chưa thu
+    // - thời gian thu
+    //
+    // Parent page cần đọc để hiển thị trạng thái.
+    // =========================================================
+
+    match /tuitionPayments/{id} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+
+    // =========================================================
+    // PHÂN CÔNG GIÁO VIÊN
+    // =========================================================
+
+    match /classTeachers/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+
+    // =========================================================
+    // MẶC ĐỊNH TỪ CHỐI
+    // =========================================================
+    //
+    // Collection nào chưa khai báo bên trên sẽ không được frontend
+    // truy cập trực tiếp.
+    // =========================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
