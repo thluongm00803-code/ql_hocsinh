@@ -1,6 +1,249 @@
-{
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
+rules_version = '2';
+
+// =============================================================
+// Firestore Security Rules — Trung tâm Giáo dục
+// =============================================================
+//
+// Vai trò:
+//   ADMIN   : toàn quyền
+//   TEACHER : quản lý dữ liệu nghiệp vụ
+//   TA      : trợ giảng
+//
+// ADMIN chính:
+//   zalo2299k@gmail.com
+//
+// Tài khoản khác:
+//   - tự đăng nhập
+//   - tạo hồ sơ với isApproved = false
+//   - chờ ADMIN duyệt
+//
+// =============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // HELPER FUNCTIONS
+    // =========================================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userExists() {
+      return isSignedIn()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        );
+    }
+
+    function userData() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isApproved() {
+      return userExists()
+        && userData().isApproved == true;
+    }
+
+    function isAdmin() {
+      return isApproved()
+        && userData().role == 'ADMIN';
+    }
+
+    function isMainAdminEmail() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'zalo2299k@gmail.com';
+    }
+
+
+    // =========================================================
+    // USERS
+    // =========================================================
+
+    match /users/{userId} {
+
+      // Người đã đăng nhập được đọc danh sách/hồ sơ user.
+      allow read: if isSignedIn();
+
+
+      // ---------------------------------------------------------
+      // TẠO USER
+      // ---------------------------------------------------------
+      //
+      // Trường hợp 1:
+      // Gmail quản trị chính được phép tự khởi tạo ADMIN.
+      //
+      // Trường hợp 2:
+      // User bình thường chỉ được tạo TEACHER hoặc TA,
+      // chưa được duyệt.
+      //
+      // ---------------------------------------------------------
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && (
+
+          // ADMIN chính
+          (
+            isMainAdminEmail()
+            && request.resource.data.role == 'ADMIN'
+            && request.resource.data.isApproved == true
+          )
+
+          ||
+
+          // Tài khoản thông thường
+          (
+            request.resource.data.role in ['TEACHER', 'TA']
+            && request.resource.data.isApproved == false
+          )
+        );
+
+
+      // Chỉ ADMIN đã được duyệt mới được:
+      // - duyệt user
+      // - đổi role
+      // - sửa user
+      // - xóa user
+      allow update, delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // LỚP HỌC
+    // =========================================================
+
+    match /classes/{id} {
+
+      // Parent/public có thể đọc.
+      allow read: if true;
+
+      // Chỉ tài khoản đã được duyệt mới được ghi.
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // HỌC SINH
+    // =========================================================
+
+    match /students/{id} {
+
+      // Parent page hiện tại cần đọc.
+      allow read: if true;
+
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // GHI DANH / HỌC SINH TRONG LỚP
+    // =========================================================
+
+    match /enrollments/{id} {
+
+      allow read: if true;
+
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // ĐIỂM DANH
+    // =========================================================
+
+    match /attendance/{id} {
+
+      allow read: if true;
+
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // ĐIỂM SỐ
+    // =========================================================
+
+    match /scores/{id} {
+
+      allow read: if true;
+
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // HỌC PHÍ
+    // CẤU HÌNH QR / TÀI KHOẢN NGÂN HÀNG
+    // =========================================================
+    //
+    // Có thể lưu:
+    // - bankId
+    // - accountNo
+    // - accountName
+    // - số tiền
+    // - nội dung chuyển khoản
+    // - cấu hình riêng từng lớp
+    //
+    // Parent page cần đọc để tạo QR.
+    //
+    // =========================================================
+
+    match /classPaymentConfigs/{id} {
+
+      allow read: if true;
+
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // HỌC PHÍ — TRẠNG THÁI THANH TOÁN
+    // =========================================================
+    //
+    // Có thể lưu:
+    // - studentId
+    // - tháng
+    // - số tiền
+    // - trạng thái
+    // - ngày đóng
+    // - ghi chú
+    //
+    // =========================================================
+
+    match /tuitionPayments/{id} {
+
+      allow read: if true;
+
+      allow create, update, delete: if isApproved();
+    }
+
+
+    // =========================================================
+    // PHÂN CÔNG GIÁO VIÊN
+    // =========================================================
+
+    match /classTeachers/{id} {
+
+      // Chỉ người đăng nhập mới xem phân công.
+      allow read: if isSignedIn();
+
+      // Chỉ ADMIN được phân công giáo viên.
+      allow create, update, delete: if isAdmin();
+    }
+
+
+    // =========================================================
+    // MẶC ĐỊNH TỪ CHỐI
+    // =========================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }
